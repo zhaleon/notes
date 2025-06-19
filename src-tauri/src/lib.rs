@@ -4,9 +4,7 @@ use std::io::{Read, Write};
 use std::path::PathBuf;
 use uuid::Uuid;
 
-// Import our embeddings module for vector similarity search
-mod embeddings;
-use embeddings::EMBEDDING_MANAGER;
+// Embeddings module removed
 
 // Define our Note structure
 #[derive(Serialize, Deserialize, Clone)]
@@ -27,11 +25,6 @@ fn notes_dir() -> PathBuf {
 pub mod commands {
     use super::*;
     
-    // Test if HNSW is working
-    #[tauri::command]
-    pub fn test_hnsw() -> String {
-        super::embeddings::test_hnsw()
-    }
     
     // Basic text search for notes
     #[tauri::command]
@@ -52,36 +45,11 @@ pub mod commands {
             .collect()
     }
     
-    // Semantic search using vector similarity
+    // Semantic search (simplified version - falls back to text search for now)
     #[tauri::command]
-    pub fn semantic_search(query: String) -> Vec<Note> {
-        if query.is_empty() {
-            return list_notes();
-        }
-        
-        // Get all notes
-        let all_notes = list_notes();
-        
-        if all_notes.is_empty() {
-            return Vec::new();
-        }
-        
-        // Try to get the embedding manager
-        if let Ok(mut manager) = EMBEDDING_MANAGER.lock() {
-            // Ensure the index is up to date
-            if manager.rebuild_index(&all_notes).is_ok() {
-                // Search for similar notes
-                if let Ok(note_ids) = manager.search(&query, 10) {
-                    // Filter notes by the returned IDs
-                    return all_notes
-                        .into_iter()
-                        .filter(|note| note_ids.contains(&note.id))
-                        .collect();
-                }
-            }
-        }
-        
-        // Fall back to basic text search if semantic search fails
+    pub fn semantic_search(query: String, _distance_cutoff: Option<f32>) -> Vec<Note> {
+        // For now, just use the basic text search
+        // In the future, this could be enhanced with embeddings or other semantic techniques
         search_notes(query)
     }
     
@@ -109,7 +77,7 @@ pub mod commands {
     // Create a new note
     #[tauri::command]
     pub fn create_note() -> Note {
-        let mut note = Note {
+        let note = Note {
             id: Uuid::new_v4().to_string(),
             title: "New Note".to_string(),
             content: "".to_string(),
@@ -120,12 +88,7 @@ pub mod commands {
             eprintln!("Error saving note: {}", e);
         }
         
-        // Add the note to the vector index
-        if let Ok(mut manager) = EMBEDDING_MANAGER.lock() {
-            if let Err(e) = manager.add_note(&note) {
-                eprintln!("Error adding note to vector index: {}", e);
-            }
-        }
+        // Vector indexing removed
         
         note
     }
@@ -138,16 +101,7 @@ pub mod commands {
         // Save the note to disk
         let result = save_note_to_disk(&note);
         
-        // Update the note in the vector index
-        if let Ok(mut manager) = EMBEDDING_MANAGER.lock() {
-            if let Err(e) = manager.update_note(&note) {
-                eprintln!("Error updating note in vector index: {}", e);
-                // If the note doesn't exist in the index yet, try to add it
-                if let Err(e) = manager.add_note(&note) {
-                    eprintln!("Error adding note to vector index: {}", e);
-                }
-            }
-        }
+        // Vector indexing removed
         
         result
     }
@@ -172,13 +126,7 @@ pub mod commands {
             content: String::new(),
         };
         
-        // Remove the note from the vector index
-        if let Ok(mut manager) = EMBEDDING_MANAGER.lock() {
-            if let Err(e) = manager.remove_note(&note) {
-                eprintln!("Error removing note from vector index: {}", e);
-                // It's okay if the note doesn't exist in the index
-            }
-        }
+        // Vector indexing removed
         
         // Delete the note file
         let dir = notes_dir();
@@ -191,6 +139,11 @@ pub mod commands {
 // Main run function
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Launch local LLM server in the background
+    {
+
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
@@ -200,7 +153,6 @@ pub fn run() {
             commands::delete_note,
             commands::search_notes,
             commands::semantic_search,
-            commands::test_hnsw
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

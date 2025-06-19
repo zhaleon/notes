@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte';
-  import { notes, selectedNote, searchResults, searchQuery, useSemanticSearch } from './notesStore';
+  import { notes, selectedNote, searchResults, searchQuery, useSemanticSearch, similarityThreshold } from './notesStore';
   import NoteEditor from './NoteEditor.svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { get } from 'svelte/store';
@@ -31,7 +31,9 @@
       
       // Use semantic search or basic search based on the toggle
       if (get(useSemanticSearch)) {
-        results = await invoke('semantic_search', { query });
+        // Pass the similarity threshold to the semantic search
+        const threshold = get(similarityThreshold);
+        results = await invoke('semantic_search', { query, distanceCutoff: threshold });
       } else {
         results = await invoke('search_notes', { query });
       }
@@ -85,18 +87,7 @@
     selectedNote.set(newNote);
   }
   
-  // Test HNSW functionality
-  /**
-   * @returns {Promise<void>}
-   */
-  async function testHnsw() {
-    try {
-      const result = await invoke('test_hnsw');
-      alert(`Test result: ${result}`);
-    } catch (error) {
-      alert(`HNSW test failed: ${error}`);
-    }
-  }
+
 </script>
 
 <main class="container notes-app">
@@ -123,10 +114,26 @@
             />
             <span>Semantic Search</span>
           </label>
+          
+          {#if $useSemanticSearch}
+          <div class="threshold-slider">
+            <label>
+              <span>Similarity Threshold: {$similarityThreshold.toFixed(2)}</span>
+              <input 
+                type="range" 
+                min="0.1" 
+                max="1.0" 
+                step="0.05"
+                bind:value={$similarityThreshold}
+                on:change={() => searchNotes($searchQuery)}
+              />
+            </label>
+          </div>
+          {/if}
         </div>
       </div>
       <button on:click={createNote} class="create-btn">+ New Note</button>
-      <button on:click={testHnsw} class="test-btn">Test Vector Search</button>
+      
       <ul>
         {#each $searchResults as note (note.id)}
           <li>
@@ -296,9 +303,27 @@
 }
 
 .search-options {
+  margin-top: 0.5em;
   display: flex;
-  align-items: center;
-  margin-bottom: 1em;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.threshold-slider {
+  width: 100%;
+  padding: 4px 0;
+}
+
+.threshold-slider label {
+  display: flex;
+  flex-direction: column;
+  font-size: 0.8em;
+  color: #555;
+}
+
+.threshold-slider input[type="range"] {
+  width: 100%;
+  margin-top: 5px;
 }
 
 .toggle-label {
@@ -345,30 +370,7 @@
   box-shadow: 0 1px 2px rgba(0,0,0,0.1);
 }
 
-.test-btn {
-  width: 100%;
-  background: #6c757d;
-  color: white;
-  border: none;
-  padding: 0.8em;
-  border-radius: 6px;
-  font-size: 0.9em;
-  cursor: pointer;
-  margin-bottom: 1em;
-  transition: background 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
-}
 
-.test-btn:hover {
-  background: #5a6268;
-  transform: translateY(-1px);
-  box-shadow: 0 3px 6px rgba(0,0,0,0.15);
-}
-
-.test-btn:active {
-  background: #495057;
-  transform: translateY(1px);
-  box-shadow: 0 1px 2px rgba(0,0,0,0.1);
-}
 .editor-section {
   flex: 1;
   padding: 1.2em 1.5em;
