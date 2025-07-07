@@ -88,9 +88,32 @@
     }, 300);
   }
   
-  function handleContentInput() {
+  let prevContent = '';
+let prevSuggestion = '';
+
+function handleContentInput(e) {
+  const oldContent = prevContent;
+  const newContent = localContent;
+  // Only handle single character additions for now
+  if (
+    suggestion &&
+    newContent.length === oldContent.length + 1 &&
+    newContent.endsWith(suggestion[0])
+  ) {
+    // User typed the next suggestion character
+    suggestion = suggestion.slice(1);
+    prevContent = newContent;
+    prevSuggestion = suggestion;
     autoSave();
+    return;
   }
+  // Otherwise, hide suggestion immediately and request a new one
+  suggestion = '';
+  prevContent = newContent;
+  prevSuggestion = '';
+  autoSave();
+  requestCompletion();
+}
 
   // async function deleteNote() {
   //   if (!note) return;
@@ -265,7 +288,7 @@
         bind:this={textareaEl}
         id="note-content" class="note-content completable-textarea"
         bind:value={localContent}
-        on:input={e => { handleContentInput(); requestCompletion(); setTimeout(syncOverlayScroll,0); }}
+        on:input={e => { handleContentInput(e); setTimeout(syncOverlayScroll,0); }}
         on:scroll={syncOverlayScroll}
         on:keydown={async e => {
            if (e.key === 'Tab') {
@@ -282,6 +305,7 @@
                textarea.focus();
                suggestion = '';
                autoSave();
+               requestCompletion(); // Generate a new suggestion after accepting
              }
            }
          }}
