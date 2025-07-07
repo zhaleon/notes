@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, onDestroy, createEventDispatcher } from 'svelte';
+  import { onMount, onDestroy, createEventDispatcher, tick } from 'svelte';
   import { notes, selectedNote, searchResults } from './notesStore';
   import { invoke } from "@tauri-apps/api/core";
   import { get } from 'svelte/store';
@@ -267,26 +267,24 @@
         bind:value={localContent}
         on:input={e => { handleContentInput(); requestCompletion(); setTimeout(syncOverlayScroll,0); }}
         on:scroll={syncOverlayScroll}
-        on:keydown={e => {
-          if (e.key === 'Tab') {
-            if (suggestion) {
-              e.preventDefault();
-              const textarea = e.target as HTMLTextAreaElement;
-              const selStart = textarea.selectionStart;
-              const selEnd = textarea.selectionEnd;
-              const before = localContent.slice(0, selStart);
-              const after = localContent.slice(selEnd);
-              localContent = before + suggestion + after;
-              // move cursor to end of inserted suggestion
-              setTimeout(() => {
-                textarea.selectionStart = textarea.selectionEnd = selStart + suggestion.length;
-                textarea.focus();
-              }, 0);
-              suggestion = '';
-              autoSave();
-            }
-          }
-        }}
+        on:keydown={async e => {
+           if (e.key === 'Tab') {
+             if (suggestion) {
+               e.preventDefault();
+               const textarea = e.target as HTMLTextAreaElement;
+               const selStart = textarea.selectionStart;
+               const selEnd = textarea.selectionEnd;
+               const before = localContent.slice(0, selStart);
+               const after = localContent.slice(selEnd);
+               localContent = before + suggestion + after;
+               await tick(); // Wait for DOM update
+               textarea.selectionStart = textarea.selectionEnd = selStart + suggestion.length;
+               textarea.focus();
+               suggestion = '';
+               autoSave();
+             }
+           }
+         }}
 
         placeholder="Start writing your note here..."
         rows={15}
