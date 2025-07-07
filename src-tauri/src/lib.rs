@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use uuid::Uuid;
 
 // LLM client module for local completions
-mod llm_client;
+mod completion_client;
 
 // Embeddings module removed
 
@@ -141,8 +141,8 @@ pub mod commands {
 
 // Create a new module for completion commands
 mod completion {
-    use crate::llm_client::GeminiClient;
-    use crate::llm_client::common::RequestMessage;
+    use crate::completion_client::GeminiClient;
+    use crate::completion_client::common::RequestMessage;
     use std::sync::Mutex;
     use std::sync::Arc;
     use log::{info, error};
