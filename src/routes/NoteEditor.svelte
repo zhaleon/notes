@@ -366,8 +366,8 @@
 }
 .autocomplete-overlay { pointer-events:none; overflow:hidden; }
 .autocomplete-overlay .typed {
-  /* color: transparent; */
-  color: #be2626;
+  color: transparent;
+  /* color: #be2626; */
 }
 .autocomplete-overlay .suggestion {
   color: #aaa;
