@@ -14,7 +14,7 @@
   let suggestion = '';
   let textareaEl: HTMLTextAreaElement | null = null;
   let overlayEl: HTMLDivElement | null = null;
-  // Debounce helper for completion requests
+
   const requestCompletion = debounce(async () => {
     if (!localContent) { suggestion = ''; return; }
     const words = localContent.split(/\s+/);
@@ -50,31 +50,22 @@
     }
   }
 
-  // Auto-save with debounce
   let saveTimeout: ReturnType<typeof setTimeout> | null = null;
-  
-  /**
-   * Auto-saves the note after a short delay
-   */
   function autoSave() {
     if (!$selectedNote) return;
     
-    // Immediately update the UI for responsiveness
     const updatedNote = { 
       ...$selectedNote, 
       title: localTitle, 
       content: localContent 
     };
     
-    // Update the stores
     notes.update(ns => ns.map(n => n.id === $selectedNote.id ? updatedNote : n));
     searchResults.update(sr => sr.map(n => n.id === $selectedNote.id ? updatedNote : n));
     selectedNote.set(updatedNote);
     
-    // Clear any existing timeout
     if (saveTimeout !== null) clearTimeout(saveTimeout);
     
-    // Set a new timeout to save after 300ms of inactivity
     saveTimeout = setTimeout(async () => {
       try {
         await invoke('save_note', { 
@@ -89,9 +80,9 @@
   }
   
   let prevContent = '';
-let prevSuggestion = '';
+  let prevSuggestion = '';
 
-function handleContentInput(e) {
+function handleContentInput(e: Event) {
   const oldContent = prevContent;
   const newContent = localContent;
   // Only handle single character additions for now
@@ -292,9 +283,9 @@ function handleContentInput(e) {
         on:scroll={syncOverlayScroll}
         on:keydown={async e => {
            if (e.key === 'Tab') {
+             e.preventDefault();
+             const textarea = e.target as HTMLTextAreaElement;
              if (suggestion) {
-               e.preventDefault();
-               const textarea = e.target as HTMLTextAreaElement;
                const selStart = textarea.selectionStart;
                const selEnd = textarea.selectionEnd;
                const before = localContent.slice(0, selStart);
@@ -306,6 +297,16 @@ function handleContentInput(e) {
                suggestion = '';
                autoSave();
                requestCompletion(); // Generate a new suggestion after accepting
+             } else {
+               const selStart = textarea.selectionStart;
+               const selEnd = textarea.selectionEnd;
+               const before = localContent.slice(0, selStart);
+               const after = localContent.slice(selEnd);
+               localContent = before + '\t' + after;
+               await tick();
+               textarea.selectionStart = textarea.selectionEnd = selStart + 1;
+               textarea.focus();
+               autoSave();
              }
            }
          }}
