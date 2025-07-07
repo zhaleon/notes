@@ -4,6 +4,9 @@ use std::io::{Read, Write};
 use std::path::PathBuf;
 use uuid::Uuid;
 
+// LLM client module for local completions
+mod llm_client;
+
 // Embeddings module removed
 
 // Define our Note structure
@@ -120,7 +123,7 @@ pub mod commands {
     #[tauri::command]
     pub fn delete_note(id: String) -> Result<(), String> {
         // Create a temporary note object with the ID to remove from the vector index
-        let note = Note {
+        let _note = Note {
             id: id.clone(),
             title: String::new(),
             content: String::new(),
@@ -133,6 +136,189 @@ pub mod commands {
         let mut path = dir;
         path.push(format!("{}.json", id));
         remove_file(&path).map_err(|e| e.to_string())
+    }
+}
+
+// Create a new module for completion commands
+mod completion {
+    use crate::llm_client::GeminiClient;
+    use crate::llm_client::common::RequestMessage;
+    use std::sync::Mutex;
+    use std::sync::Arc;
+    use log::{info, error};
+    use once_cell::sync::Lazy;
+
+    // Define the environment variable name for the Gemini API key
+    const GEMINI_API_KEY_ENV: &str = "GEMINI_API_KEY";
+
+    // Create a global Gemini client with an API key
+    static CLIENT: Lazy<Arc<Mutex<GeminiClient>>> = Lazy::new(|| {
+        // Get API key from environment variable
+        let api_key = std::env::var(GEMINI_API_KEY_ENV)
+            .unwrap_or_else(|_| {
+                // Fallback to empty string if not found, which will cause runtime errors
+                // when trying to use the API, but will allow the app to start
+                error!("GEMINI_API_KEY environment variable not set. API calls will fail.");
+                String::new()
+            });
+
+        Arc::new(Mutex::new(GeminiClient::new(api_key)))
+    });
+
+    // Get a text completion
+    #[tauri::command]
+    pub fn get_completion(prompt: String, max_tokens: i32, temperature: f32) -> Result<String, String> {
+        // Print directly to stdout for debugging
+        println!("[FRONTEND_DEBUG] Tauri command: get_completion called with prompt: '{}'", prompt);
+        println!("[FRONTEND_DEBUG] max_tokens: {}, temperature: {}", max_tokens, temperature);
+        info!("Tauri command: get_completion called with prompt: '{}', max_tokens: {}, temperature: {}", prompt, max_tokens, temperature);
+        
+        // Get the client
+        println!("[FRONTEND_DEBUG] Acquiring lock on GeminiClient");
+        let client_result = CLIENT.lock();
+        if let Err(e) = client_result {
+            let error_msg = format!("Failed to acquire lock on GeminiClient: {}", e);
+            println!("[FRONTEND_DEBUG] {}", error_msg);
+            return Err(error_msg);
+        }
+        
+        let client = client_result.unwrap();
+        println!("[FRONTEND_DEBUG] Successfully acquired lock on GeminiClient");
+        
+        // Check if the API key is configured
+        if client.api_key().is_empty() {
+            let error_msg = "Gemini API key not configured. Set the GEMINI_API_KEY environment variable.";
+            println!("[FRONTEND_DEBUG] {}", error_msg);
+            error!("API key is empty! Please set the GEMINI_API_KEY environment variable.");
+            return Err(error_msg.to_string());
+        }
+        
+        println!("[FRONTEND_DEBUG] API key is present, calling get_completion");
+        info!("API key is configured, making request to Gemini API");
+        
+        // Make the request and log the result
+        println!("[FRONTEND_DEBUG] Calling client.get_completion");
+        let result = client.get_completion(prompt, max_tokens, temperature);
+        
+        match &result {
+            Ok(text) => {
+                println!("[FRONTEND_DEBUG] Successfully got completion: '{}'", text);
+                info!("Successfully got completion: '{}'", text);
+                Ok(text.clone())
+            },
+            Err(e) => {
+                println!("[FRONTEND_DEBUG] Error getting completion: {}", e);
+                error!("Error getting completion: {}", e);
+                Err(e.to_string())
+            },
+        }
+    }
+    
+    // Get a chat completion (simplified to use get_completion)
+    #[tauri::command]
+    pub fn chat_completion(messages: Vec<RequestMessage>) -> Result<String, String> {
+        println!("[FRONTEND_DEBUG] Tauri command: chat_completion called with {} messages", messages.len());
+        info!("Tauri command: chat_completion called with {} messages", messages.len());
+        
+        // Log message contents for debugging
+        for (i, msg) in messages.iter().enumerate() {
+            println!("[FRONTEND_DEBUG] Message {}: role='{}', content='{}'", i, msg.role, msg.content);
+        }
+        
+        // Get the client
+        println!("[FRONTEND_DEBUG] Acquiring lock on GeminiClient for chat_completion");
+        let client_result = CLIENT.lock();
+        if let Err(e) = client_result {
+            let error_msg = format!("Failed to acquire lock on GeminiClient: {}", e);
+            println!("[FRONTEND_DEBUG] {}", error_msg);
+            return Err(error_msg);
+        }
+        
+        let client = client_result.unwrap();
+        println!("[FRONTEND_DEBUG] Successfully acquired lock on GeminiClient");
+        
+        // Check if the API key is configured
+        if client.api_key().is_empty() {
+            let error_msg = "Gemini API key not configured. Set the GEMINI_API_KEY environment variable.";
+            println!("[FRONTEND_DEBUG] {}", error_msg);
+            return Err(error_msg.to_string());
+        }
+        
+        // Extract the last user message to use as prompt
+        println!("[FRONTEND_DEBUG] Extracting last user message as prompt");
+        let prompt = messages.iter()
+            .filter(|msg| msg.role == "user")
+            .last()
+            .map(|msg| msg.content.clone())
+            .unwrap_or_else(|| String::new());
+            
+        if prompt.is_empty() {
+            let error_msg = "No user message found in the conversation";
+            println!("[FRONTEND_DEBUG] {}", error_msg);
+            return Err(error_msg.to_string());
+        }
+        
+        println!("[FRONTEND_DEBUG] Extracted prompt: '{}'", prompt);
+        
+        // Call the get_completion method instead
+        println!("[FRONTEND_DEBUG] Calling get_completion with prompt");
+        let result = client.get_completion(prompt, 30, 0.7);
+        
+        match &result {
+            Ok(text) => {
+                println!("[FRONTEND_DEBUG] chat_completion success: '{}'", text);
+                Ok(text.clone())
+            },
+            Err(e) => {
+                println!("[FRONTEND_DEBUG] chat_completion error: {}", e);
+                Err(e.to_string())
+            },
+        }
+    }
+
+    // Check if Gemini API is configured and working
+    #[tauri::command]
+    pub fn check_server_status() -> Result<bool, String> {
+        println!("[FRONTEND_DEBUG] Checking Gemini API status");
+        info!("Checking Gemini API status");
+        
+        // Get the client
+        println!("[FRONTEND_DEBUG] Acquiring lock on GeminiClient for status check");
+        let client_result = CLIENT.lock();
+        if let Err(e) = client_result {
+            let error_msg = format!("Failed to acquire lock on GeminiClient: {}", e);
+            println!("[FRONTEND_DEBUG] {}", error_msg);
+            return Err(error_msg);
+        }
+        
+        let client = client_result.unwrap();
+        println!("[FRONTEND_DEBUG] Successfully acquired lock on GeminiClient");
+        
+        // Check if the API key is configured
+        if client.api_key().is_empty() {
+            println!("[FRONTEND_DEBUG] Gemini API key not configured");
+            error!("Gemini API key not configured");
+            return Ok(false);
+        }
+        
+        println!("[FRONTEND_DEBUG] API key is present and configured");
+        
+        // Try a minimal API request to check if API is working
+        println!("[FRONTEND_DEBUG] Sending test request to Gemini API");
+        let result = client.get_completion("Hello".to_string(), 5, 0.7);
+        
+        match &result {
+            Ok(text) => {
+                println!("[FRONTEND_DEBUG] Gemini API is available, response: '{}'", text);
+                info!("Gemini API is available");
+                Ok(true)
+            },
+            Err(e) => {
+                println!("[FRONTEND_DEBUG] Gemini API is not available: {}", e);
+                error!("Gemini API is not available: {}", e);
+                Ok(false)
+            }
+        }
     }
 }
 
@@ -153,6 +339,9 @@ pub fn run() {
             commands::delete_note,
             commands::search_notes,
             commands::semantic_search,
+            completion::get_completion,
+            completion::chat_completion,
+            completion::check_server_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

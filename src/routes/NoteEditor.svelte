@@ -1,43 +1,54 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, createEventDispatcher } from 'svelte';
   import { notes, selectedNote, searchResults } from './notesStore';
-  import { invoke } from '@tauri-apps/api/core';
+  import { invoke } from "@tauri-apps/api/core";
   import { get } from 'svelte/store';
   import { debounce } from '$lib/utils';
 
+  const dispatch = createEventDispatcher();
+  
+  // Reactive variables for the currently edited note
   let localContent = '';
   let localTitle = '';
-  let completion = '';
-  let isLoading = false;
-
-  $: note = $selectedNote;
-  $: localContent = note ? note.content : '';
-  $: localTitle = note ? note.title : '';
-
-  // Debounced function to get completions using Tauri command
-  const getCompletion = debounce(async (text: string) => {
-    if (!text.trim()) {
-      completion = '';
-      return;
-    }
-    
+  // Current inline completion suggestion
+  let suggestion = '';
+  let textareaEl: HTMLTextAreaElement | null = null;
+  let overlayEl: HTMLDivElement | null = null;
+  // Debounce helper for completion requests
+  const requestCompletion = debounce(async () => {
+    if (!localContent) { suggestion = ''; return; }
+    const words = localContent.split(/\s+/);
+    const lastWords = words.slice(Math.max(0, words.length - 10)).join(' ');
+    if (!lastWords) { suggestion = ''; return; }
     try {
-      console.log(`[Frontend] Requesting completion for: '${text}'`);
-      const startTime = performance.now();
-      isLoading = true;
-      
-      // Use Tauri command instead of HTTP request
-      completion = await invoke('autocomplete', { prompt: text });
-      
-      const elapsed = performance.now() - startTime;
-      console.log(`[Frontend] Received completion in ${elapsed.toFixed(2)}ms: '${completion}'`);
-    } catch (error) {
-      console.error('[Frontend] Error getting completion:', error);
-      completion = '';
-    } finally {
-      isLoading = false;
+      const comp = await invoke('get_completion', {
+        prompt: lastWords,
+        maxTokens: 10,
+        temperature: 0.7
+      }) as string;
+      suggestion = comp.trim();
+    } catch (e) {
+      console.error('completion error', e);
     }
-  }, 150); // Reduced debounce time for more responsive feel
+  }, 400);
+
+  function syncOverlayScroll() {
+    if (textareaEl && overlayEl) {
+      overlayEl.scrollTop = textareaEl.scrollTop;
+      overlayEl.scrollLeft = textareaEl.scrollLeft;
+    }
+  }
+  
+  // Update local state when selectedNote changes
+  $: {
+    if ($selectedNote) {
+      localContent = $selectedNote.content;
+      localTitle = $selectedNote.title;
+    } else {
+      localContent = '';
+      localTitle = '';
+    }
+  }
 
   // Auto-save with debounce
   let saveTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -46,57 +57,198 @@
    * Auto-saves the note after a short delay
    */
   function autoSave() {
-    if (!note) return;
+    if (!$selectedNote) return;
     
     // Immediately update the UI for responsiveness
-    const updatedNote = { ...note, title: localTitle, content: localContent };
+    const updatedNote = { 
+      ...$selectedNote, 
+      title: localTitle, 
+      content: localContent 
+    };
     
-    // Update the main notes store
-    notes.update(ns => ns.map(n => n.id === note.id ? updatedNote : n));
-    
-    // Update the search results store too
-    searchResults.update(sr => sr.map(n => n.id === note.id ? updatedNote : n));
-    
-    // Update the selected note
+    // Update the stores
+    notes.update(ns => ns.map(n => n.id === $selectedNote.id ? updatedNote : n));
+    searchResults.update(sr => sr.map(n => n.id === $selectedNote.id ? updatedNote : n));
     selectedNote.set(updatedNote);
     
     // Clear any existing timeout
     if (saveTimeout !== null) clearTimeout(saveTimeout);
     
-    // Set a new timeout to save after 300ms of inactivity (reduced from 500ms)
+    // Set a new timeout to save after 300ms of inactivity
     saveTimeout = setTimeout(async () => {
-      await invoke('save_note', { id: note.id, title: localTitle, content: localContent });
+      try {
+        await invoke('save_note', { 
+          id: $selectedNote.id, 
+          title: localTitle, 
+          content: localContent 
+        });
+      } catch (error) {
+        console.error('Error saving note:', error);
+      }
     }, 300);
   }
   
   function handleContentInput() {
     autoSave();
-    // Get completion for the current line
-    const lines = localContent.split('\n');
-    const currentLine = lines[lines.length - 1];
-    console.log(`[Frontend] Current line: '${currentLine}'`);
-    getCompletion(currentLine);
   }
 
-  // Delete note function (kept for potential future use)
-  async function deleteNote() {
-    if (!note) return;
-    await invoke('delete_note', { id: note.id });
+  // async function deleteNote() {
+  //   if (!note) return;
+  //   await invoke('delete_note', { id: note.id });
     
-    // Update both stores
-    notes.update(ns => ns.filter(n => n.id !== note.id));
-    searchResults.update(sr => sr.filter(n => n.id !== note.id));
+  //   // Update both stores
+  //   notes.update(ns => ns.filter(n => n.id !== note.id));
+  //   searchResults.update(sr => sr.filter(n => n.id !== note.id));
     
-    selectedNote.set(null);
-  }
+  //   selectedNote.set(null);
+  // }
+
+  // Auto-select a note when the component mounts
+  onMount(async () => {
+    // Wait a moment for the notes to load
+    setTimeout(async () => {
+      const allNotes = get(notes);
+      if (allNotes.length > 0 && !get(selectedNote)) {
+        // Select the first note
+        selectedNote.set(allNotes[0]);
+      } else if (allNotes.length === 0) {
+        // If no notes exist, create a new one
+        const newNote = await invoke('create_note', { title: 'New Note', content: '' });
+        // Type assertion to ensure the note has the correct structure
+        const typedNote = newNote as {id: string, title: string, content: string};
+        notes.update(n => [...n, typedNote]);
+        selectedNote.set(typedNote);
+      }
+    }, 100);
+  });
 
   onDestroy(() => {
     if (saveTimeout) clearTimeout(saveTimeout);
-    getCompletion.cancel?.();
   });
+
+  // function handleSearch() {
+  //   const query = prompt("Enter search term:");
+  //   if (query) {
+  //     const results = get(notes).filter(note => 
+  //       note.title.toLowerCase().includes(query.toLowerCase()) || 
+  //       note.content.toLowerCase().includes(query.toLowerCase())
+  //     );
+      
+  //     if (results.length > 0) {
+  //       const noteIds = results.map(note => note.id);
+  //       dispatch("search-results", { noteIds });
+  //     } else {
+  //       window.alert("No results found");
+  //     }
+  //   }
+  // }
+
+  // async function handleSave() {
+  //   if (note) {
+  //     await invoke("save_note", { id: note.id, title: localTitle, content: localContent });
+  //     window.alert("Note saved!");
+  //   }
+  // }
+
+  // async function handleDelete() {
+  //   if (note && confirm("Are you sure you want to delete this note?")) {
+  //     await invoke("delete_note", { id: note.id });
+  //     dispatch("note-deleted");
+  //   }
+  // }
+
+  // async function handleSemanticSearch() {
+  //   try {
+  //     const query = prompt("Enter search query:");
+  //     if (!query) return;
+
+  //     const results = await invoke("semantic_search", { query });
+  //     console.log("Semantic search results:", results);
+      
+  //     if (results && Array.isArray(results) && results.length > 0) {
+  //       const noteIds = results.map((r: any) => r.id);
+  //       dispatch("search-results", { noteIds });
+  //     } else {
+  //       window.alert("No results found");
+  //     }
+  //   } catch (error: any) {
+  //     console.error("Error during semantic search:", error);
+  //     window.alert(`Error: ${error.message || error}`);
+  //   }
+  // }
+
+  // async function checkServerStatus() {
+  //   try {
+  //     const isAvailable = await invoke("check_server_status");
+  //     if (isAvailable) {
+  //       window.alert("gRPC server is available!");
+  //     } else {
+  //       window.alert("gRPC server is not available. Please start the server.");
+  //     }
+  //   } catch (error: any) {
+  //     console.error("Error checking server status:", error);
+  //     window.alert(`Error: ${error.message || error}`);
+  //   }
+  // }
+
+  // Get completion from gRPC server
+  // async function getCompletion() {
+  //   try {
+  //     if (!$selectedNote) return;
+      
+  //     // Get the current selection or use the last few words as context
+  //     const selection = window.getSelection()?.toString() || "";
+  //     let prompt = selection;
+      
+  //     if (!prompt || prompt.trim() === "") {
+  //       // If no selection, use the last few words of the note content
+  //       const words = localContent.split(/\s+/);
+  //       const lastWords = words.slice(Math.max(0, words.length - 10)).join(" ");
+  //       prompt = lastWords;
+  //     }
+      
+  //     if (!prompt || prompt.trim() === "") {
+  //       const userPrompt = window.prompt("Enter text for completion:");
+  //       if (!userPrompt) return;
+  //       prompt = userPrompt;
+  //     }
+
+  //     const completion = await invoke("get_completion", { 
+  //       prompt, 
+  //       maxTokens: 50, 
+  //       temperature: 0.7 
+  //     }) as string;
+      
+  //     // Insert the completion at the current cursor position
+  //     const textarea = document.getElementById("note-content") as HTMLTextAreaElement;
+  //     if (!textarea) return;
+      
+  //     const cursorPos = textarea.selectionEnd;
+  //     const textBefore = localContent.substring(0, cursorPos);
+  //     const textAfter = localContent.substring(cursorPos);
+      
+  //     // Update the local content with the completion
+  //     localContent = textBefore + completion + textAfter;
+      
+  //     // Trigger auto-save
+  //     autoSave();
+      
+  //     // Move cursor to end of inserted completion
+  //     setTimeout(() => {
+  //       if (textarea) {
+  //         textarea.selectionStart = textarea.selectionEnd = cursorPos + completion.length;
+  //         textarea.focus();
+  //       }
+  //     }, 0);
+      
+  //   } catch (error: any) {
+  //     console.error("Error getting completion:", error);
+  //     window.alert(`Error: ${error.message || error}`);
+  //   }
+  // }
 </script>
 
-{#if note}
+{#if $selectedNote}
   <div class="note-editor">
     <input
       class="note-title"
@@ -106,47 +258,40 @@
       on:input={autoSave}
     />
     <div class="editor-container">
+      {#if suggestion}
+        <div bind:this={overlayEl} class="autocomplete-overlay"><span class="typed">{localContent}</span><span class="suggestion">{suggestion}</span></div>
+      {/if}
       <textarea
+        bind:this={textareaEl}
+        id="note-content" class="note-content completable-textarea"
         bind:value={localContent}
-        on:input={handleContentInput}
+        on:input={e => { handleContentInput(); requestCompletion(); setTimeout(syncOverlayScroll,0); }}
+        on:scroll={syncOverlayScroll}
         on:keydown={e => {
-          // Handle tab key
           if (e.key === 'Tab') {
-            e.preventDefault(); // Always prevent default tab behavior
-            
-            if (completion) {
-              // If there's a completion, accept it
-              localContent += completion;
-              completion = '';
-            } else {
-              // Otherwise insert a tab character
-              const selStart = e.target.selectionStart;
-              const selEnd = e.target.selectionEnd;
-              
-              // Insert tab at cursor position
-              localContent = localContent.substring(0, selStart) + '\t' + 
-                            localContent.substring(selEnd);
-              
-              // Set cursor position after the tab
+            if (suggestion) {
+              e.preventDefault();
+              const textarea = e.target as HTMLTextAreaElement;
+              const selStart = textarea.selectionStart;
+              const selEnd = textarea.selectionEnd;
+              const before = localContent.slice(0, selStart);
+              const after = localContent.slice(selEnd);
+              localContent = before + suggestion + after;
+              // move cursor to end of inserted suggestion
               setTimeout(() => {
-                e.target.selectionStart = e.target.selectionEnd = selStart + 1;
+                textarea.selectionStart = textarea.selectionEnd = selStart + suggestion.length;
+                textarea.focus();
               }, 0);
+              suggestion = '';
+              autoSave();
             }
-            
-            // Trigger auto-save after tab insertion
-            setTimeout(autoSave, 0);
           }
         }}
-        class="note-content"
+
         placeholder="Start writing your note here..."
         rows={15}
       ></textarea>
-      
-      {#if completion}
-        <div class="completion" class:loading={isLoading}>
-          {completion}
-        </div>
-      {/if}
+
     </div>
   </div>
 {:else}
@@ -166,32 +311,6 @@
     height: 100%;
   }
   
-  .completion {
-    position: absolute;
-    left: 0;
-    right: 0;
-    bottom: 100%;
-    color: #666;
-    padding: 0.5rem;
-    margin-bottom: 0.5rem;
-    border: 1px solid #e0e0e0;
-    border-radius: 4px;
-    background-color: #f9f9f9;
-    opacity: 1;
-    transition: opacity 0.3s ease;
-    pointer-events: none;
-  }
-  
-  .completion.loading {
-    opacity: 0.7;
-  }
-  
-  .completion::before {
-    content: 'Suggestion: ';
-    font-weight: bold;
-    color: #4CAF50;
-  }
-  
   .note-content {
     width: 100%;
     box-sizing: border-box;
@@ -201,32 +320,23 @@
     font-family: inherit;
     font-size: 1em;
     line-height: 1.5;
-  }
-
-  .note-title:focus {
-    border-color: #c0d0e8;
-  }
-  
-  .note-content:focus {
-    border-color: #c0d0e8;
-    box-shadow: 0 0 0 1px #f0f4f8;
-    outline: none;
-    resize: none;
-    flex: 1;
-    border: 1px solid #ddd;
+    border: 1px solid #c0d0e8;
     border-radius: 4px;
-    padding: 0.7em;
-    line-height: 1.5;
-    font-size: 1em;
-    font-family: inherit;
+    padding: 12px;
     color: #333;
     background: #fff;
+    box-shadow: 0 0 0 1px #f0f4f8;
     transition: border-color 0.2s, box-shadow 0.2s;
+    vertical-align: top;
   }
 
-  .note-title:focus {
-    border-color: #c0d0e8;
+  .note-title {
+    border: 1px solid #c0d0e8;
+    border-radius: 4px;
+    padding: 0.5em;
+    font-size: 1.2em;
     box-shadow: 0 0 0 1px #f0f4f8;
+    outline: none;
   }
 
   p {
@@ -235,4 +345,46 @@
     text-align: center;
     margin-top: 2em;
   }
+.autocomplete-overlay {
+  border: 1px solid transparent;
+  border-radius: 4px; /* match .note-content */
+
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  min-height: 200px;
+  font-family: inherit;
+  font-size: 1em;
+  line-height: 1.5;
+  box-sizing: border-box;
+  padding: 12px;
+  white-space: pre-wrap;
+  pointer-events: none;
+  overflow: hidden;
+  vertical-align: top;
+}
+.autocomplete-overlay { pointer-events:none; overflow:hidden; }
+.autocomplete-overlay .typed {
+  /* color: transparent; */
+  color: #be2626;
+}
+.autocomplete-overlay .suggestion {
+  color: #aaa;
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  font-style: inherit;
+  line-height: inherit;
+  letter-spacing: inherit;
+  vertical-align: inherit;
+}
+.completable-textarea {
+  background: transparent;
+  position: relative;
+  z-index: 2;
+}
+.editor-container {
+  position: relative;
+}
 </style>
