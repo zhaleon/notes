@@ -1,9 +1,28 @@
 <script>
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { notes, selectedNote, searchResults, searchQuery, useSemanticSearch, similarityThreshold } from './notesStore';
   import NoteEditor from './NoteEditor.svelte';
+  import CommandPalette from './CommandPalette.svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { get } from 'svelte/store';
+
+  let paletteOpen = false;
+  function openPalette(e) {
+    // ctrl+k or cmd+k
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+      e.preventDefault();
+      paletteOpen = true;
+    }
+  }
+  function closePalette() {
+    paletteOpen = false;
+  }
+  onMount(() => {
+    window.addEventListener('keydown', openPalette);
+  });
+  onDestroy(() => {
+    window.removeEventListener('keydown', openPalette);
+  });
 
   // Load notes from backend on mount
   onMount(async () => {
@@ -91,6 +110,7 @@
 </script>
 
 <main class="container notes-app">
+  <CommandPalette open={paletteOpen} on:close={closePalette} />
   <!-- This span is used to make Svelte recognize the highlight class -->
   <span class="highlight" style="display: none;"></span>
   
@@ -105,32 +125,7 @@
           on:input={(e) => searchNotes(e.currentTarget.value)}
           bind:value={$searchQuery}
         />
-        <div class="search-options">
-          <label class="toggle-label">
-            <input 
-              type="checkbox" 
-              bind:checked={$useSemanticSearch} 
-              on:change={() => searchNotes($searchQuery)}
-            />
-            <span>Semantic Search</span>
-          </label>
-          
-          {#if $useSemanticSearch}
-          <div class="threshold-slider">
-            <label>
-              <span>Similarity Threshold: {$similarityThreshold.toFixed(2)}</span>
-              <input 
-                type="range" 
-                min="0.1" 
-                max="1.0" 
-                step="0.05"
-                bind:value={$similarityThreshold}
-                on:change={() => searchNotes($searchQuery)}
-              />
-            </label>
-          </div>
-          {/if}
-        </div>
+        <!-- Semantic Search toggle and threshold slider removed -->
       </div>
       <button on:click={createNote} class="create-btn">+ New Note</button>
       
@@ -302,41 +297,6 @@
   background-color: #fff;
 }
 
-.search-options {
-  margin-top: 0.5em;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.threshold-slider {
-  width: 100%;
-  padding: 4px 0;
-}
-
-.threshold-slider label {
-  display: flex;
-  flex-direction: column;
-  font-size: 0.8em;
-  color: #555;
-}
-
-.threshold-slider input[type="range"] {
-  width: 100%;
-  margin-top: 5px;
-}
-
-.toggle-label {
-  display: flex;
-  align-items: center;
-  font-size: 0.85em;
-  color: #666;
-  cursor: pointer;
-}
-
-.toggle-label input {
-  margin-right: 0.5em;
-}
 
 .highlight {
   background-color: rgba(255, 230, 0, 0.4);
