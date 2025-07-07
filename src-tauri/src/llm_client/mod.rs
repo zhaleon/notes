@@ -96,7 +96,7 @@ impl GeminiClient {
             // System prompt to instruct Gemini to generate only 2-5 words for autocomplete
             Content {
                 role: Some("user".to_string()), // Gemini does not support "system", so use "user"
-                parts: Some(vec![Part { text: Some("You are an autocomplete assistant. Only return 2-5 words to continue the user's sentence.".to_string()) }]),
+                parts: Some(vec![Part { text: Some("You are an autocomplete assistant. Only return 2-5 words to continue the user's sentence. If the user's sentence does not end with a space or punctuation, start your completion with a space to ensure proper word separation.".to_string()) }]),
             },
             Content {
                 role: Some("user".to_string()),
@@ -118,7 +118,8 @@ impl GeminiClient {
         };
         
         // Make the API call
-        let url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
+        // let url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
+        let url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite-preview-06-17:generateContent";
         
         println!("[GEMINI_DEBUG] Sending request to Gemini API at {}", url);
         info!("Sending request to Gemini API at {}", url);
