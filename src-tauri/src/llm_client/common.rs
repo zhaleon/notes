@@ -42,39 +42,39 @@ pub struct ToolCallFunction {
 }
 
 // Role mapping trait for different LLM providers
-pub trait RoleMapper {
-    fn map_role(&self, role: &str) -> &'static str;
+// pub trait RoleMapper {
+//     fn map_role(&self, role: &str) -> &'static str;
     
-    fn map_messages<F, T>(&self, messages: &[RequestMessage], mapper: F) -> Vec<T>
-    where
-        F: Fn(&RequestMessage, &'static str) -> T,
-    {
-        messages
-            .iter()
-            .map(|msg| {
-                let provider_role = self.map_role(&msg.role);
-                mapper(msg, provider_role)
-            })
-            .collect()
-    }
-}
+//     fn map_messages<F, T>(&self, messages: &[RequestMessage], mapper: F) -> Vec<T>
+//     where
+//         F: Fn(&RequestMessage, &'static str) -> T,
+//     {
+//         messages
+//             .iter()
+//             .map(|msg| {
+//                 let provider_role = self.map_role(&msg.role);
+//                 mapper(msg, provider_role)
+//             })
+//             .collect()
+//     }
+// }
 
-// Gemini-specific role mapper
-pub struct GeminiRoleMapper;
+// // Gemini-specific role mapper
+// pub struct GeminiRoleMapper;
 
-impl GeminiRoleMapper {
-    pub fn new() -> Self {
-        Self {}
-    }
-}
+// impl GeminiRoleMapper {
+//     pub fn new() -> Self {
+//         Self {}
+//     }
+// }
 
-impl RoleMapper for GeminiRoleMapper {
-    fn map_role(&self, role: &str) -> &'static str {
-        match role {
-            "user" => "user",
-            "assistant" => "model",
-            "system" => "user", // Gemini handles system messages differently
-            _ => "user", // Default to user for unknown roles
-        }
-    }
-}
+// impl RoleMapper for GeminiRoleMapper {
+//     fn map_role(&self, role: &str) -> &'static str {
+//         match role {
+//             "user" => "user",
+//             "assistant" => "model",
+//             "system" => "user", // Gemini handles system messages differently
+//             _ => "user", // Default to user for unknown roles
+//         }
+//     }
+// }
